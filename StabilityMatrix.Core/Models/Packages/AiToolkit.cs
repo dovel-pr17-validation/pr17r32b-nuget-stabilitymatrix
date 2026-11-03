@@ -1,0 +1,239 @@
+﻿using System.Collections.Immutable;
+using System.Text.RegularExpressions;
+using Injectio.Attributes;
+using NLog;
+using StabilityMatrix.Core.Extensions;
+using StabilityMatrix.Core.Helper;
+using StabilityMatrix.Core.Helper.Cache;
+using StabilityMatrix.Core.Helper.HardwareInfo;
+using StabilityMatrix.Core.Models.FileInterfaces;
+using StabilityMatrix.Core.Models.Progress;
+using StabilityMatrix.Core.Processes;
+using StabilityMatrix.Core.Python;
+using StabilityMatrix.Core.Services;
+using LogLevel = Microsoft.Extensions.Logging.LogLevel;
+
+namespace StabilityMatrix.Core.Models.Packages;
+
+[RegisterSingleton<BasePackage, AiToolkit>(Duplicate = DuplicateStrategy.Append)]
+public class AiToolkit(
+    IGithubApiCache githubApi,
+    ISettingsManager settingsManager,
+    IDownloadService downloadService,
+    IPrerequisiteHelper prerequisiteHelper,
+    IPyInstallationManager pyInstallationManager,
+    IPipWheelService pipWheelService
+)
+    : BaseGitPackage(
+        githubApi,
+        settingsManager,
+        downloadService,
+        prerequisiteHelper,
+        pyInstallationManager,
+        pipWheelService
+    )
+{
+    private AnsiProcess? npmProcess;
+    private static readonly Logger Logger = LogManager.GetCurrentClassLogger();
+
+    public override string Name => "ai-toolkit";
+    public override string DisplayName { get; set; } = "AI-Toolkit";
+    public override string Author => "ostris";
+    public override string Blurb => "AI Toolkit is an all in one training suite for diffusion models";
+    public override string LicenseType => "MIT";
+    public override string LicenseUrl => "https://github.com/ostris/ai-toolkit/blob/main/LICENSE";
+    public override string LaunchCommand => string.Empty;
+
+    public override Uri PreviewImageUri => new("https://cdn.lykos.ai/sm/packages/aitoolkit/preview.webp");
+
+    public override string OutputFolderName => "output";
+    public override IEnumerable<TorchIndex> AvailableTorchIndices => [TorchIndex.Cuda];
+    public override PackageDifficulty InstallerSortOrder => PackageDifficulty.Advanced;
+    public override SharedFolderMethod RecommendedSharedFolderMethod => SharedFolderMethod.None;
+    public override List<LaunchOptionDefinition> LaunchOptions => [];
+    public override Dictionary<SharedOutputType, IReadOnlyList<string>>? SharedOutputFolders => [];
+    public override string MainBranch => "main";
+    public override bool IsCompatible => HardwareHelper.HasNvidiaGpu();
+
+    public override TorchIndex GetRecommendedTorchVersion() => TorchIndex.Cuda;
+
+    public override PackageType PackageType => PackageType.SdTraining;
+    public override bool OfferInOneClickInstaller => false;
+    public override bool ShouldIgnoreReleases => true;
+    public override PyVersion RecommendedPythonVersion => Python.PyInstallationManager.Python_3_12_10;
+
+    public override IEnumerable<PackagePrerequisite> Prerequisites =>
+        base.Prerequisites.Concat([PackagePrerequisite.Node]);
+
+    public override async Task InstallPackage(
+        string installLocation,
+        InstalledPackage installedPackage,
+        InstallPackageOptions options,
+        IProgress<ProgressReport>? progress = null,
+        Action<ProcessOutput>? onConsoleOutput = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        progress?.Report(new ProgressReport(-1, "Setting up venv", isIndeterminate: true));
+        await using var venvRunner = await SetupVenvPure(
+                installLocation,
+                pythonVersion: options.PythonOptions.PythonVersion
+            )
+            .ConfigureAwait(false);
+        venvRunner.UpdateEnvironmentVariables(env => GetEnvVars(env, venvRunner.Version));
+
+        var isLegacyNvidia =
+            SettingsManager.Settings.PreferredGpu?.IsLegacyNvidiaGpu() ?? HardwareHelper.HasLegacyNvidiaGpu();
+
+        var config = new PipInstallConfig
+        {
+            RequirementsFilePaths = ["requirements.txt"],
+            // Upstream (ostris/ai-toolkit README) installs torch 2.13.0 / cu130.
+            TorchVersion = "==2.13.0",
+            TorchvisionVersion = "==0.28.0",
+            TorchaudioVersion = "==2.11.0",
+            // cu130 by default (requires NVIDIA driver 580+); keep cu126 for legacy NVIDIA GPUs.
+            // torch 2.13.0 publishes wheels on both indexes.
+            CudaIndex = isLegacyNvidia ? "cu126" : "cu130",
+            ExtraPipArgs = [Compat.IsWindows ? "triton-windows" : "triton"],
+            // ai-toolkit doesn't pin numpy, so it floats to 2.x and breaks the scipy/diffusers
+            // C-extensions (built for numpy 1.x): "numpy.dtype size changed... binary incompatibility".
+            // Pin to the last 1.x release to keep them ABI-compatible.
+            PostInstallPipArgs = ["numpy==1.26.4"],
+            UpgradePackages = true,
+        };
+
+        await StandardPipInstallProcessAsync(
+                venvRunner,
+                options,
+                installedPackage,
+                config,
+                onConsoleOutput,
+                progress,
+                cancellationToken
+            )
+            .ConfigureAwait(false);
+
+        progress?.Report(new ProgressReport(-1f, "Installing AI Toolkit UI...", isIndeterminate: true));
+
+        var uiDirectory = new DirectoryPath(installLocation, "ui");
+        var envVars = GetEnvVars(venvRunner.EnvironmentVariables, venvRunner.Version);
+        await PrerequisiteHelper
+            .RunNpm("install", uiDirectory, progress?.AsProcessOutputHandler(), envVars)
+            .ConfigureAwait(false);
+        await PrerequisiteHelper
+            .RunNpm("run update_db", uiDirectory, progress?.AsProcessOutputHandler(), envVars)
+            .ConfigureAwait(false);
+        await PrerequisiteHelper
+            .RunNpm("run build", uiDirectory, progress?.AsProcessOutputHandler(), envVars)
+            .ConfigureAwait(false);
+    }
+
+    public override async Task RunPackage(
+        string installLocation,
+        InstalledPackage installedPackage,
+        RunPackageOptions options,
+        Action<ProcessOutput>? onConsoleOutput = null,
+        CancellationToken cancellationToken = default
+    )
+    {
+        await SetupVenv(installLocation, pythonVersion: PyVersion.Parse(installedPackage.PythonVersion))
+            .ConfigureAwait(false);
+        VenvRunner.UpdateEnvironmentVariables(env => GetEnvVars(env, VenvRunner.Version));
+
+        if (await WarnIfNvidiaDriverBelowCu130MinimumAsync(VenvRunner, onConsoleOutput).ConfigureAwait(false))
+        {
+            return;
+        }
+
+        var uiDirectory = new DirectoryPath(installLocation, "ui");
+        var envVars = GetEnvVars(VenvRunner.EnvironmentVariables, VenvRunner.Version);
+        npmProcess = PrerequisiteHelper.RunNpmDetached(
+            "run start",
+            uiDirectory,
+            HandleConsoleOutput,
+            envVars
+        );
+        npmProcess.EnableRaisingEvents = true;
+        if (Compat.IsWindows)
+        {
+            ProcessTracker.AttachExitHandlerJobToProcess(npmProcess);
+        }
+
+        return;
+
+        void HandleConsoleOutput(ProcessOutput s)
+        {
+            onConsoleOutput?.Invoke(s);
+
+            if (!s.Text.Contains("Local:  ", StringComparison.OrdinalIgnoreCase))
+                return;
+
+            var regex = new Regex(@"(https?:\/\/)([^:\s]+):(\d+)");
+            var match = regex.Match(s.Text);
+            if (match.Success)
+            {
+                WebUrl = match.Value;
+            }
+            OnStartupComplete(WebUrl);
+        }
+    }
+
+    public override async Task WaitForShutdown()
+    {
+        if (npmProcess is { HasExited: false })
+        {
+            npmProcess.Kill(true);
+            try
+            {
+                await npmProcess
+                    .WaitForExitAsync(new CancellationTokenSource(5000).Token)
+                    .ConfigureAwait(false);
+            }
+            catch (OperationCanceledException e)
+            {
+                Logger.Warn(e, "Timed out waiting for npm to exit");
+                npmProcess.CancelStreamReaders();
+            }
+        }
+        npmProcess = null;
+    }
+
+    private ImmutableDictionary<string, string> GetEnvVars(
+        ImmutableDictionary<string, string> env,
+        PyVersion pythonVersion
+    )
+    {
+        // Keep distutils importable for setuptools-based builds and training jobs. Must be
+        // "local" (setuptools' bundled copy): any other value falls back to stdlib distutils,
+        // which no longer exists on Python 3.12+ and breaks source builds (e.g. the pinned
+        // diffusers git commit in ai-toolkit's requirements).
+        // An older pre-2.16.3 pre-existing install may still run 3.11, where stdlib distutils
+        // is present and "local" re-arms the _distutils_hack shim, which crashes
+        // when pip loads before setuptools (pypa/setuptools#3621). See StabilityMatrix #1725.
+        // Use "stdlib" on Python < 3.12 and "local" on 3.12+, based on the venv's real version.
+        var useLocalDistutils = pythonVersion >= new PyVersion(3, 12, 0);
+        env = env.SetPackageDefault(
+            SettingsManager,
+            "SETUPTOOLS_USE_DISTUTILS",
+            useLocalDistutils ? "local" : "stdlib"
+        );
+
+        var pathBuilder = new EnvPathBuilder();
+
+        if (env.TryGetValue("PATH", out var value))
+        {
+            pathBuilder.AddPath(value);
+        }
+
+        pathBuilder.AddPath(
+            Compat.IsWindows
+                ? Environment.GetFolderPath(Environment.SpecialFolder.System)
+                : Path.Combine(SettingsManager.LibraryDir, "Assets", "nodejs", "bin")
+        );
+
+        pathBuilder.AddPath(Path.Combine(SettingsManager.LibraryDir, "Assets", "nodejs"));
+
+        return env.SetItem("PATH", pathBuilder.ToString());
+    }
+}

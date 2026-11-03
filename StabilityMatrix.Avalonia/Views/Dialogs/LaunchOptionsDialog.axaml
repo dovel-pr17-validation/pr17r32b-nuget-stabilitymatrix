@@ -1,0 +1,189 @@
+﻿<controls:UserControlBase
+    x:Class="StabilityMatrix.Avalonia.Views.Dialogs.LaunchOptionsDialog"
+    xmlns="https://github.com/avaloniaui"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:controls="clr-namespace:StabilityMatrix.Avalonia.Controls"
+    xmlns:converters="clr-namespace:StabilityMatrix.Avalonia.Converters"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:dialogs="clr-namespace:StabilityMatrix.Avalonia.ViewModels.Dialogs"
+    xmlns:lang="clr-namespace:StabilityMatrix.Avalonia.Languages"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    xmlns:mocks="clr-namespace:StabilityMatrix.Avalonia.DesignData"
+    xmlns:models="clr-namespace:StabilityMatrix.Core.Models;assembly=StabilityMatrix.Core"
+    xmlns:ui="using:FluentAvalonia.UI.Controls"
+    d:DataContext="{x:Static mocks:DesignData.LaunchOptionsViewModel}"
+    d:DesignHeight="650"
+    d:DesignWidth="500"
+    x:DataType="dialogs:LaunchOptionsViewModel"
+    mc:Ignorable="d">
+    <controls:UserControlBase.Resources>
+
+        <converters:LaunchOptionConverter x:Key="LaunchOptionConverter" />
+        <converters:LaunchOptionIntDoubleConverter x:Key="LaunchOptionIntDoubleConverter" />
+        <converters:ValueConverterGroup x:Key="LaunchOptionIntToStringConverter">
+            <converters:LaunchOptionConverter />
+            <converters:LaunchOptionIntDoubleConverter />
+        </converters:ValueConverterGroup>
+
+    </controls:UserControlBase.Resources>
+
+    <Grid
+        MinWidth="400"
+        Margin="8"
+        RowDefinitions="Auto,*">
+        <StackPanel
+            Margin="0,0,0,16"
+            HorizontalAlignment="Stretch"
+            Orientation="Vertical"
+            Spacing="4">
+            <!--  Title  -->
+            <TextBlock
+                Margin="16"
+                FontSize="24"
+                FontWeight="Bold"
+                Text="{Binding Title}"
+                TextWrapping="Wrap" />
+            <!--  Search box  -->
+            <TextBox
+                x:Name="SearchBox"
+                Margin="8,0"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Top"
+                IsVisible="{Binding IsSearchBoxEnabled}"
+                Text="{Binding SearchText, Mode=TwoWay}"
+                Watermark="{x:Static lang:Resources.Label_SearchEllipsis}">
+                <TextBox.InnerRightContent>
+                    <ui:SymbolIcon Margin="0,0,8,0" Symbol="Find" />
+                </TextBox.InnerRightContent>
+            </TextBox>
+        </StackPanel>
+
+        <!--  Option Cards  -->
+        <ScrollViewer Grid.Row="1" VerticalScrollBarVisibility="Auto">
+            <ItemsControl
+                Padding="8"
+                HorizontalAlignment="Stretch"
+                VerticalAlignment="Stretch"
+                ItemsSource="{Binding FilteredCards}">
+
+                <ItemsControl.ItemsPanel>
+                    <ItemsPanelTemplate>
+                        <StackPanel Spacing="4" />
+                    </ItemsPanelTemplate>
+                </ItemsControl.ItemsPanel>
+
+                <ItemsControl.DataTemplates>
+                    <controls:LaunchOptionCardTemplateSelector>
+                        <!--  Int type card (textboxes)  -->
+                        <DataTemplate x:Key="{x:Static models:LaunchOptionType.Int}" x:DataType="models:LaunchOptionCard">
+                            <controls:Card>
+                                <StackPanel
+                                    Margin="8,0,8,0"
+                                    HorizontalAlignment="Stretch"
+                                    Orientation="Vertical">
+                                    <TextBlock
+                                        Margin="0,8"
+                                        FontSize="16"
+                                        FontWeight="Bold"
+                                        Text="{Binding Title}"
+                                        TextWrapping="Wrap" />
+                                    <ItemsControl ItemsSource="{Binding Options}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel HorizontalAlignment="Stretch" Orientation="Vertical">
+                                                    <Label Content="{Binding Name}" />
+                                                    <ui:NumberBox
+                                                        Margin="8"
+                                                        HorizontalAlignment="Stretch"
+                                                        VerticalAlignment="Stretch"
+                                                        PlaceholderText="{Binding DefaultValue, Mode=OneWay, Converter={StaticResource LaunchOptionConverter}}"
+                                                        SpinButtonPlacementMode="Compact"
+                                                        ValidationMode="Disabled"
+                                                        Value="{Binding OptionValue, Converter={StaticResource LaunchOptionIntDoubleConverter}, Mode=TwoWay}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </controls:Card>
+                        </DataTemplate>
+
+                        <!--  String type card (textboxes)  -->
+                        <DataTemplate x:Key="{x:Static models:LaunchOptionType.String}" DataType="{x:Type models:LaunchOptionCard}">
+                            <controls:Card Margin="0,8">
+                                <StackPanel
+                                    Margin="8,0,8,0"
+                                    HorizontalAlignment="Stretch"
+                                    Orientation="Vertical">
+                                    <TextBlock
+                                        Margin="0,8"
+                                        FontSize="16"
+                                        FontWeight="Bold"
+                                        Text="{Binding Title}"
+                                        TextWrapping="Wrap" />
+                                    <ItemsControl ItemsSource="{Binding Options}">
+                                        <ItemsControl.ItemTemplate>
+                                            <DataTemplate>
+                                                <StackPanel HorizontalAlignment="Stretch" Orientation="Vertical">
+                                                    <Label Content="{Binding Name}" />
+                                                    <!--  PlaceholderEnabled="{Binding HasDefaultValue}"  -->
+                                                    <TextBox
+                                                        Margin="8"
+                                                        HorizontalAlignment="Stretch"
+                                                        VerticalAlignment="Stretch"
+                                                        Text="{Binding OptionValue, Converter={StaticResource LaunchOptionConverter}}"
+                                                        Watermark="{Binding DefaultValue}" />
+                                                </StackPanel>
+                                            </DataTemplate>
+                                        </ItemsControl.ItemTemplate>
+                                    </ItemsControl>
+                                </StackPanel>
+                            </controls:Card>
+                        </DataTemplate>
+
+                        <!--  Bool type card (checkboxes)  -->
+                        <DataTemplate x:Key="{x:Static models:LaunchOptionType.Bool}" DataType="{x:Type models:LaunchOptionCard}">
+                            <controls:Card Margin="0,8">
+                                <StackPanel
+                                    Margin="8,0,8,0"
+                                    HorizontalAlignment="Left"
+                                    Orientation="Vertical">
+                                    <TextBlock
+                                        Margin="0,8"
+                                        FontSize="16"
+                                        FontWeight="Bold"
+                                        Text="{Binding Title}"
+                                        TextWrapping="Wrap" />
+                                    <StackPanel IsVisible="{Binding !IsSingleSelect}" Orientation="Horizontal">
+                                        <ItemsControl ItemsSource="{Binding Options}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <CheckBox Content="{Binding Name}" IsChecked="{Binding OptionValue, Converter={StaticResource LaunchOptionConverter}}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                    <!--  Mutually exclusive options are rendered as radio buttons  -->
+                                    <StackPanel IsVisible="{Binding IsSingleSelect}" Orientation="Horizontal">
+                                        <ItemsControl ItemsSource="{Binding Options}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate>
+                                                    <RadioButton
+                                                        Content="{Binding Name}"
+                                                        GroupName="{Binding GroupName}"
+                                                        IsChecked="{Binding OptionValue, Converter={StaticResource LaunchOptionConverter}}" />
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </StackPanel>
+                            </controls:Card>
+                        </DataTemplate>
+                    </controls:LaunchOptionCardTemplateSelector>
+                </ItemsControl.DataTemplates>
+            </ItemsControl>
+        </ScrollViewer>
+
+    </Grid>
+
+</controls:UserControlBase>
