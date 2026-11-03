@@ -6,7 +6,7 @@
     <PackageVersion Include="Apizr.Integrations.Fusillade" Version="6.3.0" />
     <PackageVersion Include="AsyncAwaitBestPractices" Version="9.0.0" />
     <PackageVersion Include="AutoComplete.Net" Version="1.2211.2014.42" />
-    <PackageVersion Include="AutoCtor" Version="2.4.1" />
+    <PackageVersion Include="AutoCtor" Version="4.0.2" />
     <PackageVersion Include="Blake3" Version="1.1.0" />
     <PackageVersion Include="CompiledExpressions" Version="1.1.0" />
     <PackageVersion Include="CommandLineParser" Version="2.9.1" />
